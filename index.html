@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0e1b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="description" content="쯔꾸르 감성 픽셀 마을에서 30일 동안 판타지 주식을 사고파는 웹 게임">
 <title>개미 퀘스트</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -129,7 +133,28 @@ body{background:var(--page);color:var(--ink);font-family:var(--f-ui)}
 .abtns .m{grid-column:1/3;font-size:14px}
 .help{margin:0;color:var(--page-ink);font-size:13px;line-height:1.7;text-align:center}
 .help kbd{font:inherit;border:1px solid #3a4380;border-radius:3px;padding:0 .35em;color:var(--ink)}
-@media (max-width:720px),(pointer:coarse){#pad{display:flex}}
+/* 폰 세로: 지도는 위, 대화창은 그 아래 빈 공간, 패드는 맨 아래 */
+@media (max-width:720px),(pointer:coarse){
+  html,body{height:100%;overscroll-behavior:none}
+  body{overflow:hidden;-webkit-touch-callout:none}
+  .wrap{height:100dvh;box-sizing:border-box;padding-block:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-bottom));gap:8px;max-width:min(100%,calc((100dvh - 210px)*4/3))}
+  .help{display:none}
+  #game{flex:1;min-height:0;aspect-ratio:auto;background:var(--page)}
+  #cv{inset:auto;top:0;left:0;height:auto;aspect-ratio:4/3}
+  #game > *{font-size:clamp(13px,3.4cqw,17px)}
+  #hud{top:calc(75cqw + .4em)}
+  #pad{display:flex}
+}
+/* 폰 가로: 지도를 화면 높이에 맞추고 패드는 양옆에 띄운다 */
+@media (pointer:coarse) and (orientation:landscape) and (max-height:600px){
+  .wrap{flex-direction:row;justify-content:center;align-items:center;padding:0;gap:0;max-width:none}
+  #game{flex:none;width:min(calc(100dvh*4/3),calc(100vw - 380px));height:auto;aspect-ratio:4/3}
+  #cv{inset:0;height:100%}
+  #game > *{font-size:clamp(11px,2.6cqw,16px)}
+  #hud{top:.5em}
+  #pad{position:fixed;inset:0;pointer-events:none;align-items:flex-end;padding:12px max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+  #pad > *{pointer-events:auto}
+}
 @container game (max-width:620px){
   .big{inset:0}
   .tbody{grid-template-columns:minmax(0,1fr)}
@@ -201,7 +226,7 @@ body{background:var(--page);color:var(--ink);font-family:var(--f-ui)}
       <button class="pbtn m" data-key="menu">메뉴</button>
     </div>
   </div>
-  <p class="help">이동 <kbd>←↑↓→</kbd>/<kbd>WASD</kbd> · 말 걸기·확인 <kbd>Space</kbd>/<kbd>Enter</kbd>/<kbd>Z</kbd> · 취소 <kbd>Esc</kbd>/<kbd>X</kbd> · 내 계좌 <kbd>M</kbd><br>장은 09:00에 열려 15:30에 닫히고, 시세는 실시간으로 움직입니다. 집에서 자면 다음 날로 넘어갑니다. 진행 상황은 이 브라우저에 자동 저장됩니다.</p>
+  <p class="help">이동 <kbd>←↑↓→</kbd>/<kbd>WASD</kbd> · 말 걸기·확인 <kbd>Space</kbd>/<kbd>Enter</kbd>/<kbd>Z</kbd> · 취소 <kbd>Esc</kbd>/<kbd>X</kbd> · 내 계좌 <kbd>M</kbd> · 지도를 클릭하면 그곳까지 걸어가고, 사람이나 문을 클릭하면 말을 겁니다<br>장은 09:00에 열려 15:30에 닫히고, 시세는 실시간으로 움직입니다. 집에서 자면 다음 날로 넘어갑니다. 진행 상황은 이 브라우저에 자동 저장됩니다.</p>
 </main>
 
 <script>
@@ -685,6 +710,27 @@ const NPC_DEF=[
 ];
 let NPCS=[];
 function resetNPCs(){NPCS=NPC_DEF.filter(d=>!d.when||d.when()).map(d=>({...d,ox:d.x,oy:d.y,tx:d.x,ty:d.y,t:0,moving:false,timer:1+rand()*2,face:d.dir==='right'?'right':'left'}))}
+// 지도를 탭하면 그 칸까지 걸어간다. 사람·문을 탭하면 옆까지 가서 말을 건다.
+let route=null;
+function planRoute(tx,ty){
+  route=null;
+  if(tx<0||ty<0||tx>=MW||ty>=MH)return;
+  const target=blocked(tx,ty,P)&&!(tx===P.x&&ty===P.y);
+  const goals=new Set();
+  if(target){for(const d in DV){const gx=tx-DV[d][0],gy=ty-DV[d][1];if((gx===P.x&&gy===P.y)||!blocked(gx,gy,P))goals.add(gx+','+gy)}}
+  else goals.add(tx+','+ty);
+  if(!goals.size)return;
+  const prev={},start=P.x+','+P.y,q=[[P.x,P.y]];prev[start]=null;
+  let end=null;
+  while(q.length){
+    const [x,y]=q.shift(),k=x+','+y;
+    if(goals.has(k)){end=k;break}
+    for(const d in DV){const nx=x+DV[d][0],ny=y+DV[d][1],nk=nx+','+ny;if(nk in prev||blocked(nx,ny,P))continue;prev[nk]=k;q.push([nx,ny])}
+  }
+  if(!end)return;
+  const path=[];for(let k=end;k!==start;k=prev[k])path.unshift(k.split(',').map(Number));
+  route={path,face:target?[tx,ty]:null,dest:[tx,ty]};
+}
 const P={x:4,y:5,tx:4,ty:5,t:0,moving:false,dir:'down',col:{skin:'#f6cda6',hair:'#5a3418',shirt:'#3d7be0',pants:'#2a2a40'}};
 function placePlayer(p){P.x=P.tx=p.x;P.y=P.ty=p.y;P.dir=p.dir;P.t=0;P.moving=false}
 function npcAt(x,y){return NPCS.find(n=>(n.x===x&&n.y===y)||(n.moving&&n.tx===x&&n.ty===y))}
@@ -699,6 +745,12 @@ function blocked(x,y,self){
 /* ----- 배경 사전 렌더 ----- */
 const cv=$('#cv');cv.width=MW*T*SC;cv.height=MH*T*SC;
 const ctx=cv.getContext('2d');
+cv.addEventListener('pointerdown',e=>{
+  unlockAudio();if(!canControl())return;
+  const r=cv.getBoundingClientRect();
+  planRoute(Math.floor((e.clientX-r.left)/r.width*MW),Math.floor((e.clientY-r.top)/r.height*MH));
+});
+['contextmenu','dblclick'].forEach(ev=>{cv.addEventListener(ev,e=>e.preventDefault());$('#pad').addEventListener(ev,e=>e.preventDefault())});
 const bg=document.createElement('canvas');bg.width=MW*T;bg.height=MH*T;
 const g=bg.getContext('2d');
 const hash=(x,y,s=0)=>{const n=Math.sin(x*127.1+y*311.7+s*74.7)*43758.5453;return n-Math.floor(n)};
@@ -1606,6 +1658,18 @@ function update(dt){
     if(D.i>=D.text.length)D.more.hidden=false;
   }
   if(P.moving)step(P,dt,5.5);
+  if(route&&(held.length||!canControl()))route=null;
+  if(route&&!P.moving){
+    if(!route.path.length){
+      const f=route.face;route=null;
+      if(f){const dx=f[0]-P.x,dy=f[1]-P.y;P.dir=dx>0?'right':dx<0?'left':dy>0?'down':'up';if(interactable(f[0],f[1])||tileAt(f[0],f[1])==='~'||lampAt(f[0],f[1]))interact()}
+    }else{
+      const [nx,ny]=route.path[0],dx=nx-P.x,dy=ny-P.y;
+      P.dir=dx>0?'right':dx<0?'left':dy>0?'down':'up';
+      if(blocked(nx,ny,P)){const d=route.dest;route=null;planRoute(d[0],d[1])}
+      else{route.path.shift();P.tx=nx;P.ty=ny;P.moving=true;P.t=0}
+    }
+  }
   if(!P.moving&&canControl()&&held.length){
     const d=held[held.length-1];P.dir=d;
     const [dx,dy]=DV[d];
@@ -1657,6 +1721,7 @@ function draw(){
   {const [px,py]=lerp(P),fr=P.moving?(Math.floor(clock*8)%2?1:2):0;
    list.push({y:py,f:()=>drawChar(px,py,P.dir,fr,P.col,{cap:true})});}
   list.sort((a,b)=>a.y-b.y).forEach(o=>o.f());
+  if(route){const [x,y]=route.dest,a=Math.sin(clock*8)>0;R(x*T+1,y*T+1,14,1,a?'#ffd451':'#fff');R(x*T+1,y*T+14,14,1,a?'#ffd451':'#fff');R(x*T+1,y*T+1,1,14,a?'#ffd451':'#fff');R(x*T+14,y*T+1,1,14,a?'#ffd451':'#fff')}
   if(canControl()&&!P.moving){
     const [x,y]=targetOf();
     if(interactable(x,y)){
