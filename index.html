@@ -265,6 +265,10 @@ const DIFF={
     fee:.0005,tax:.003,lag:2,volMul:1.25,rent:.02,delist:.15,fortuneCost:.03,
     forgive:.2,bkRate:.005,
     desc:'목표 1억 · 하락장 · 세력이 먼저 움직임 · 수수료↑ · 매주 집세'},
+  hell:{name:'극악',start:1000000,goal:100000000,truth:.5,rate:0,merchant:0,fortune:.6,bear:-.008,upP:.35,pick:.25,loanMul:0,loanCap:0,
+    fee:.0005,tax:.003,lag:4,volMul:1.5,rent:.03,delist:.2,fortuneCost:.05,
+    forgive:0,bkRate:.01,strikes:1,living:20000,sharkRate:.1,sharkDays:5,noLarge:true,rotDay:3,swan:true,revert:.6,squeeze:.3,
+    desc:'목표 1억 · 폭락장 · 은행 대출 없음 · 속보 뒤 되돌림 · 블랙스완 · 매일 생활비'}
 };
 const STOCKS=[
   {id:'SLM',name:'슬라임전자',sector:'전자',desc:'말랑한 반도체 1위',p:52000,vol:.028,drift:.002,beta:1},
@@ -345,6 +349,8 @@ const ACH=[
   ['reborn','회생 완료','파산 후 회생 빚을 모두 갚았다'],
   ['phoenix','불사조 개미','파산하고도 목표 금액을 달성했다'],
   ['fish','강태공','낚시 알바에서 세 마리를 모두 낚았다'],
+  ['hell','지옥에서 온 개미','극악 난이도를 클리어했다'],
+  ['swan','블랙스완 생존','블랙스완 폭락일에 오히려 돈을 벌었다'],
 ];
 // 쿠키 클리커 주식 시장의 숨은 추세 모드 오마주
 const MODES={
@@ -358,7 +364,7 @@ const MODES={
 const WD=['일','월','화','수','목','금','토'];
 const wdOf=day=>(day-1)%7;
 const SLIMES=[{name:'빨강 슬라임',odds:2,p:.45},{name:'파랑 슬라임',odds:3,p:.3},{name:'초록 슬라임',odds:5,p:.17},{name:'금색 슬라임',odds:12,p:.08}];
-const SHARK_RATE=.05,SHARK_DAYS=7;
+const sharkRate=()=>DF().sharkRate??.05,sharkDays=()=>DF().sharkDays??7;
 const tickSize=p=>p<2000?1:p<5000?5:p<20000?10:p<50000?50:p<200000?100:p<500000?500:1000;
 const roundTick=p=>{const t=tickSize(p);return Math.max(1,Math.round(p/t)*t)};
 const floorTick=p=>{const t=tickSize(p);return Math.max(1,Math.floor(p/t)*t)};
@@ -371,7 +377,7 @@ function newState(diff='normal'){
   return {v:3,diff,start:D.start,goal:D.goal,day:1,time:DAY_START,cash:D.start,debt:0,pos:{},short:{},
     stocks:STOCKS.map(s=>({id:s.id,price:s.p,prev:s.p,hist:[s.p],lo:s.p,hi:s.p,limit:null,dead:false,mode:'stable'})),
     path:{},jumps:{},next:{},events:[],rumors:[],lastEvents:[],idxHist:[1000],eqHist:[D.start],
-    tw:null,tn:null,shark:null,street:null,bk:null,bkCount:0,
+    tw:null,tn:null,shark:null,street:null,bk:null,bkCount:0,swanDay:6+Math.floor(Math.random()*22),
     weather:'sun',merchant:false,flags:{},quests:{},ach:{},
     stats:{trades:0,realized:0,fees:0,peak:D.start,loans:0,cat:0,fortunes:0,divs:0},
     player:{x:4,y:5,dir:'down'}};
@@ -381,6 +387,7 @@ const holdValue=()=>S.stocks.reduce((a,s)=>a+(S.pos[s.id]?.qty||0)*s.price,0);
 const shortValue=()=>S.stocks.reduce((a,s)=>a+(S.short[s.id]?.qty||0)*s.price,0);
 const equity=()=>S.cash+holdValue()-shortValue()-S.debt-(S.shark?.amt||0)-(S.bk&&!S.bk.done?S.bk.debt:0);
 const inBk=()=>!!(S.bk&&!S.bk.done);
+const strikeMax=()=>DF().strikes??3;
 const indexNow=()=>S.stocks.reduce((a,s)=>a+s.price/INFO[s.id].p,0)/S.stocks.length*1000;
 const marketOpen=()=>S.time>=OPEN&&S.time<CLOSE;
 const chgOf=s=>s.dead||!s.prev?0:s.price/s.prev-1;
@@ -395,7 +402,7 @@ function makePath(st,rNoise,jumps,i0=0,old=null){
   for(let k=0;k<=n;k++){
     const i=i0+k;
     let L=lb*k/n+sig*(W[k]-W[n]*k/n);
-    for(const j of jumps)if(j.step>i0&&i>=j.step)L+=j.log*Math.min(1,(i-j.step+1)/2);
+    for(const j of jumps)if(j.step>i0&&i>=j.step)L+=j.log*Math.min(1,(i-j.step+1)/(j.ramp||2));
     path.push(Math.min(st.hi,Math.max(st.lo,roundTick(p0*Math.exp(L)))));
   }
   path[i0]=p0;
@@ -422,7 +429,7 @@ function rerollFuture(i0){
 // 동물의 숲 무 주식 오마주: 일요일에 사서 월~토 오전/오후 시세에 판다
 function turnipWeek(){
   const base=Math.round((9000+rand()*2000)/100)*100,r=(a,b)=>a+rand()*(b-a);
-  const t=rand(),pat=t<.35?'random':t<.5?'dec':t<.75?'small':'large';
+  const t=rand()*(DF().noLarge?.75:1),pat=t<.35?'random':t<.5?'dec':t<.75?'small':'large';
   const arr=[];let v=r(.85,.9);const k=1+Math.floor(rand()*7);
   for(let i=0;i<12;i++){
     if(pat==='random')arr.push(r(.6,1.4));
@@ -436,7 +443,7 @@ function turnipWeek(){
 function turnipPrice(){
   if(!S.tw)return null;
   const d=S.day-S.tw.start;
-  if(d<1||d>6)return null;
+  if(d<1||d>6||(DF().rotDay&&d>=DF().rotDay))return null;
   return S.tw.prices[(d-1)*2+(S.time>=720?1:0)];
 }
 function rollDay(){
@@ -449,7 +456,21 @@ function rollDay(){
   for(const st of shuffle([...live]).slice(0,n)){
     const up=rand()<D.upP,mag=(.06+rand()*.14)*(st.id==='GBC'?1.7:1)*D.volMul,step=2+Math.floor(rand()*(N-5));
     jumps[st.id].push({step,log:Math.log(1+(up?mag:-mag))});
+    if(D.revert)jumps[st.id].push({step:step+(D.lag||0)+1,log:-Math.log(1+(up?mag:-mag))*D.revert,ramp:6});
     S.events.push({id:st.id,up,text:pick(EV[st.id][up?'up':'down']),step,fired:false});
+  }
+  if(D.squeeze){
+    // 극악: 공매도 잡힌 종목이 갑자기 튀어 오른다
+    for(const st of live)if(S.short[st.id]&&rand()<D.squeeze){
+      const step=2+Math.floor(rand()*(N-8));
+      jumps[st.id].push({step,log:Math.log(1.15+rand()*.15)});
+      S.events.push({id:st.id,up:true,text:`${INFO[st.id].name} 숏스퀴즈! 공매도 세력 비명`,step,fired:false});
+    }
+  }
+  if(D.swan&&S.day===S.swanDay){
+    const step=3+Math.floor(rand()*20);
+    for(const st of live)jumps[st.id].push({step,log:Math.log(1-(.15+rand()*.1))});
+    S.events.push({id:null,macro:true,up:false,text:'[블랙스완] 왕국 금고 파산설 확산... 전 종목 투매',step,fired:false,swan:true});
   }
   let macro=null;
   if(rand()<.25){
@@ -465,19 +486,22 @@ function rollDay(){
     S.next[st.id]=S.path[st.id][N]/st.price-1;
   }
   for(const e of S.events){
-    if(e.macro){if(rand()<.6)S.rumors.push({id:null,up:e.up,text:macro.rumor});continue}
+    if(e.macro){if(macro&&!e.swan&&rand()<.6)S.rumors.push({id:null,up:e.up,text:macro.rumor});continue}
     const truth=rand()<D.truth,up=truth?e.up:!e.up;
     S.rumors.push({id:e.id,up,text:truth?e.text:pick(EV[e.id][up?'up':'down'])});
   }
   if(rand()<.5&&live.length){const o=pick(live),up=rand()<.5;if(!S.rumors.some(r=>r.id===o.id))S.rumors.push({id:o.id,up,text:pick(EV[o.id][up?'up':'down'])})}
   if(!macro&&rand()<.15){const m=pick(MACRO);S.rumors.push({id:null,up:m.up,text:m.rumor,fake:true})}
-  for(const r of S.rumors)r.truth=r.id?(r.up===(S.next[r.id]>0)):!r.fake;
+  if(D.swan&&S.day===S.swanDay-1)S.rumors.push({id:null,up:false,text:'요즘 왕국 금고 쪽 분위기가 이상하다더라',swanHint:true});
+  for(const r of S.rumors)r.truth=r.swanHint?true:r.id?(r.up===(S.next[r.id]>0)):!r.fake;
   shuffle(S.rumors);
   const w=rand();S.weather=w<.18?'rain':w<.24?'snow':'sun';
   S.merchant=rand()<DIFF[S.diff].merchant;
   S.flags={};S.time=DAY_START;
-  if(wdOf(S.day)===0){
+  if(wdOf(S.day)===0||(DF().rotDay&&wdOf(S.day)===DF().rotDay)){
     if(S.tn&&S.tn.qty){S.flags.rotten=S.tn.qty;S.tn=null;ach('rot')}
+  }
+  if(wdOf(S.day)===0){
     turnipWeek();
   }
   const sr=rand();
@@ -524,7 +548,7 @@ function advanceDay(){
   rep.shortFee=Math.round(shortValue()*SHORT_FEE);S.cash-=rep.shortFee;
   rep.interest=Math.round(S.debt*DIFF[S.diff].rate);S.debt+=rep.interest;
   if(S.shark){
-    const si=Math.round(S.shark.amt*SHARK_RATE);S.shark.amt+=si;rep.interest+=si;
+    const si=Math.round(S.shark.amt*sharkRate());S.shark.amt+=si;rep.interest+=si;
     if(S.day>=S.shark.due){
       // 기한 초과: 상어 형님이 계좌를 통째로 정리한다
       for(const id in S.pos){const st=stockOf(id),g=S.pos[id].qty*st.price;S.cash+=g-Math.ceil(g*DF().fee)-Math.floor(g*DF().tax)}
@@ -536,8 +560,10 @@ function advanceDay(){
   S.lastEvents=rep.events;
   S.idxHist.push(indexNow());
   const eq=equity();S.eqHist.push(eq);S.stats.peak=Math.max(S.stats.peak,eq);
+  if(DF().swan&&S.day===S.swanDay&&eq>S.eqHist[S.eqHist.length-2])ach('swan');
   S.day++;
   if(wdOf(S.day)===0&&DF().rent){rep.rent=Math.max(50000,Math.round(Math.max(0,equity())*DF().rent/1000)*1000);S.cash-=rep.rent}
+  if(DF().living){rep.living=DF().living;S.cash-=rep.living}
   if(inBk()){
     // 회생: 매일 밤 변제금이 자동으로 빠져나가고, 못 내면 경고가 쌓인다
     const b=S.bk,bi=Math.round(b.debt*DF().bkRate);b.debt+=bi;
@@ -967,7 +993,7 @@ function updateHUD(){
   const eq=equity(),ret=eq/S.start-1,idx=indexNow(),ich=idx/S.idxHist[S.idxHist.length-1]-1,[ph,pc]=phase();
   if(eq>=S.start*2)ach('x2');if(eq>=S.goal)ach('goal');
   const wx={sun:'맑음',rain:'비',snow:'눈'}[S.weather];
-  h.innerHTML=`<span><b>${S.day}일차(${WD[wdOf(S.day)]})</b>/${DAYS} ${hhmm(S.time)} <span class="mk ${pc}">${ph}</span> <span class="dim">${wx}</span></span><span>현금 ${fmt(S.cash)}</span><span>총자산 <span class="${cls(ret)}">${fmt(eq)} (${pct(ret)})</span></span>${S.debt?`<span class="dn">대출 ${fmt(S.debt)}</span>`:''}${S.shark?`<span class="dn">사채 ${fmt(S.shark.amt)} (D-${S.shark.due-S.day})</span>`:''}${inBk()?`<span class="dn">회생 빚 ${fmt(S.bk.debt)} · 변제금 ${fmt(S.bk.daily)}/일 · 경고 ${S.bk.strikes}/3</span>`:''}<span class="idx">모험지수 ${idx.toFixed(1)} <i class="${cls(ich)}">${arrow(ich)}${(Math.abs(ich)*100).toFixed(2)}%</i></span>`;
+  h.innerHTML=`<span><b>${S.day}일차(${WD[wdOf(S.day)]})</b>/${DAYS} ${hhmm(S.time)} <span class="mk ${pc}">${ph}</span> <span class="dim">${wx}</span></span><span>현금 ${fmt(S.cash)}</span><span>총자산 <span class="${cls(ret)}">${fmt(eq)} (${pct(ret)})</span></span>${S.debt?`<span class="dn">대출 ${fmt(S.debt)}</span>`:''}${S.shark?`<span class="dn">사채 ${fmt(S.shark.amt)} (D-${S.shark.due-S.day})</span>`:''}${inBk()?`<span class="dn">회생 빚 ${fmt(S.bk.debt)} · 변제금 ${fmt(S.bk.daily)}/일 · 경고 ${S.bk.strikes}/${strikeMax()}</span>`:''}<span class="idx">모험지수 ${idx.toFixed(1)} <i class="${cls(ich)}">${arrow(ich)}${(Math.abs(ich)*100).toFixed(2)}%</i></span>`;
 }
 
 /* ================= 차트 ================= */
@@ -1106,7 +1132,7 @@ function renderStatus(){
       <div><dt>수익률</dt><dd class="${cls(ret)}">${pct(ret)}</dd></div>
       <div><dt>목표까지</dt><dd>${eq>=S.goal?'달성!':fmt(S.goal-eq)+'원'}</dd></div>
       <div><dt>실현손익</dt><dd class="${cls(S.stats.realized)}">${fmt(S.stats.realized)}원</dd></div>
-      ${inBk()?`<div><dt>회생 빚</dt><dd class="dn">${fmt(S.bk.debt)}원</dd></div><div><dt>변제금 · 경고</dt><dd>${fmt(S.bk.daily)}원/일 · ${S.bk.strikes}/3</dd></div>`:''}
+      ${inBk()?`<div><dt>회생 빚</dt><dd class="dn">${fmt(S.bk.debt)}원</dd></div><div><dt>변제금 · 경고</dt><dd>${fmt(S.bk.daily)}원/일 · ${S.bk.strikes}/${strikeMax()}</dd></div>`:''}
       ${S.shark?`<div><dt>사채 (기한 ${S.shark.due}일차)</dt><dd class="dn">${fmt(S.shark.amt)}원</dd></div>`:''}
       ${S.tn?`<div><dt>황금무 (자산 미포함)</dt><dd>${fmt(S.tn.qty)}개 @${fmt(S.tn.avg)}</dd></div>`:''}
     </dl>
@@ -1155,10 +1181,11 @@ function showReport(prevEq,rep){
       ${rep.div?`<div><dt>배당금(세후)</dt><dd class="${cls(rep.div)}">${fmt(rep.div)}원</dd></div>`:''}
       ${rep.interest?`<div><dt>대출 이자</dt><dd class="dn">-${fmt(rep.interest)}원</dd></div>`:''}
       ${rep.shortFee?`<div><dt>공매도 대차료</dt><dd class="dn">-${fmt(rep.shortFee)}원</dd></div>`:''}
+      ${rep.living?`<div><dt>생활비</dt><dd class="dn">-${fmt(rep.living)}원</dd></div>`:''}
       ${rep.rent?`<div><dt>주간 집세</dt><dd class="dn">-${fmt(rep.rent)}원</dd></div>`:""}
       ${rep.bkPay!=null?`<div><dt>회생 변제금</dt><dd class="dn">-${fmt(rep.bkPay)}원</dd></div>`:''}
       ${rep.autoLoan?`<div><dt>현금 부족 → 빚으로</dt><dd class="dn">${fmt(rep.autoLoan)}원</dd></div>`:''}</dl>
-      ${rep.bkStrike?`<p class="foot dn">변제금을 다 내지 못했다! 경고 ${rep.bkStrike} / 3. 세 번이면 회생이 폐지된다.</p>`:''}
+      ${rep.bkStrike?`<p class="foot dn">변제금을 다 내지 못했다! 경고 ${rep.bkStrike} / ${strikeMax()}. ${strikeMax()}번이면 회생이 폐지된다.</p>`:''}
       ${rep.bkDone?'<p class="foot gold">회생 빚을 모두 갚았다! 신용이 회복되어 대출과 공매도를 다시 쓸 수 있다.</p>':''}
       ${S.bk&&!S.bk.done&&rep.bkPay!=null?`<p class="foot">남은 회생 빚 ${fmt(S.bk.debt)}원 · 하루 변제금 ${fmt(S.bk.daily)}원</p>`:''}<dl class="kv num">
       ${rep.collect?`<div><dt>상어 형님 강제 정리</dt><dd class="dn">-${fmt(rep.collect)}원</dd></div>`:''}</dl>
@@ -1193,7 +1220,7 @@ async function declareBankruptcy(){
   await say('쾅쾅쾅! 이른 아침부터 누군가 문을 두드린다.');
   await say(`모험가 씨, 총자산이 0 아래로 떨어져 파산이 선고되었습니다.\n보유 주식은 모두 처분했고, 집은 압류되었습니다.`,Nm);
   await say(`갚아야 할 돈 ${fmt(owed)}원 중 ${fmt(forgiven)}원을 탕감하고,\n남은 ${fmt(debt)}원은 개인회생으로 갚게 됩니다.`,Nm);
-  await say(`매일 밤 ${fmt(S.bk.daily)}원씩 자동으로 빠져나갑니다.\n세 번 못 내면 회생이 폐지됩니다. 회생 중엔 대출·사채·공매도·도박이 금지입니다.`,Nm);
+  await say(`매일 밤 ${fmt(S.bk.daily)}원씩 자동으로 빠져나갑니다.\n${strikeMax()}번 못 내면 회생이 폐지됩니다. 회생 중엔 대출·사채·공매도·도박이 금지입니다.`,Nm);
   await say('생계비 5만 원은 남겨 드립니다. ...힘내세요.',Nm);
   await say('(눈을 뜨니 낚시터 벤치였다. 옆에서 박씨가 낚싯대를 드리우고 있다.)');
   await say('허허, 자네도 왔구먼. 여기 벤치 자리 하나는 내가 맡아 두지.\n일거리가 필요하면 말하게. 낚시든 뭐든 같이 하세.','물린 박씨');
@@ -1241,7 +1268,7 @@ async function goSleep(){
   await wait(500);
   await showReport(prevEq,rep);
   sleeping=false;
-  if(inBk()&&S.bk.strikes>=3)return ending('fail');
+  if(inBk()&&S.bk.strikes>=strikeMax())return ending('fail');
   if(S.day>DAYS)return ending(equity()<0&&!inBk()?'bankrupt':null);
   if(!inBk()&&equity()<0){
     if(S.bkCount>=1)return ending('bankrupt');
@@ -1253,7 +1280,7 @@ async function goSleep(){
   const wx={sun:'',rain:' 밖에는 비가 내린다.',snow:' 밖에 눈이 내린다!'}[S.weather];
   if(S.flags.rotten)await say(`가방에서 고약한 냄새가 난다... 황금무 ${fmt(S.flags.rotten)}개가 모두 썩어 버렸다.`);
   if(rep.bkDone)await say('법원에서 편지가 왔다.\n"회생 절차를 모두 마쳤습니다. 신용이 회복되었습니다."\n오늘부터 다시 집에서 잘 수 있다!');
-  else if(inBk())await say(`(벤치에서 일어났다. 등이 배긴다...)\n남은 회생 빚 ${fmt(S.bk.debt)}원 · 하루 변제금 ${fmt(S.bk.daily)}원 · 경고 ${S.bk.strikes}/3`);
+  else if(inBk())await say(`(벤치에서 일어났다. 등이 배긴다...)\n남은 회생 빚 ${fmt(S.bk.debt)}원 · 하루 변제금 ${fmt(S.bk.daily)}원 · 경고 ${S.bk.strikes}/${strikeMax()}`);
   await say(`${S.day}일차(${WD[wdOf(S.day)]}요일) 아침이 밝았다.${wx}${wdOf(S.day)===0?'\n일요일이다. 정오까지 무 장수 무순이가 황금무를 판다.':''}${S.shark&&S.shark.due-S.day<=1?'\n오늘이 사채 상환 기한이다!':''}${S.merchant?'\n마을 아래쪽에 수상한 상인이 와 있다는 소문이다.':''}${S.day===DAYS?'\n오늘이 마지막 거래일이다!':''}${S.day%10===0?'\n오늘 장 마감 때 배당금이 나온다.':''}`);
 }
 async function enter(b){
@@ -1277,6 +1304,7 @@ async function enter(b){
     await openTrade();
   }else if(b.id==='bank'){
     const rate=(DIFF[S.diff].rate*100).toFixed(1);
+    if(!DF().loanCap)return say('죄송합니다. 요즘 같은 시장에선 은행이 아무에게도 대출해 드리지 않아요.\n...급하시면 저쪽 상어 형님을 찾으시겠죠.','은행원');
     const D=DIFF[S.diff],rule=`총자산의 ${D.loanMul}배, 최대 ${fmt(D.loanCap/10000)}만 원`;
     await say(`왕립 은행입니다. 이자는 하루 ${rate}%이고,\n대출 한도는 ${rule}까지입니다.`,'은행원');
     const UNITS=[LOAN,LOAN*5,LOAN*10];
@@ -1474,12 +1502,12 @@ async function talk(n){
     }else if(n.id==='shark'){
       const Nm=n.name;
       if(!S.shark){
-        await say(`급전 필요해? 신용 따윈 안 봐.\n대신 이자는 하루 ${SHARK_RATE*100}%, ${SHARK_DAYS}일 안에 원리금 전부 갚아.`,Nm);
+        await say(`급전 필요해? 신용 따윈 안 봐.\n대신 이자는 하루 ${Math.round(sharkRate()*100)}%, ${sharkDays()}일 안에 원리금 전부 갚아.`,Nm);
         await say('기한 넘기면... 네 계좌는 내가 알아서 정리한다. 주식이고 뭐고 싹 다.',Nm);
         const amts=[1000000,5000000,10000000];
         const c=await choose('얼마 필요해?',[...amts.map(x=>fmt(x/10000)+'만 원'),'됐어요'],Nm);
         if(c>=amts.length)return;
-        S.shark={amt:amts[c],due:S.day+SHARK_DAYS};S.cash+=amts[c];coin();updateHUD();
+        S.shark={amt:amts[c],due:S.day+sharkDays()};S.cash+=amts[c];coin();updateHUD();
         await say(`${fmt(amts[c])}원 받아. ${S.shark.due}일차 장 마감 전까지다. 잊지 마.`,Nm);
       }else{
         const left=S.shark.due-S.day;
@@ -1551,6 +1579,7 @@ function ending(kind){
   const eq=equity(),ret=eq/S.start-1,over=kind==='bankrupt'||kind==='fail';
   const [rank,line]=kind==='bankrupt'?(S.bkCount?['두 번째 파산','한 번은 일어섰지만, 두 번째는 없었다. 은행원이 조용히 벤치 자리를 가리킨다...']:['파산','총자산이 0 아래로 떨어진 채 마지막 날을 맞았다. 은행원이 집 문을 두드린다...'])
     :kind==='fail'?['박씨의 옆자리','변제금을 세 번 내지 못해 회생이 폐지되었다. 오늘부터 박씨와 나란히 낚싯대를 드리운다.']
+    :S.diff==='hell'&&eq>=S.goal?(ach('hell'),['지옥에서 온 개미','극악의 시장에서 1억을 만들어 냈다. 마을 사람들은 이걸 전설이 아니라 괴담으로 이야기한다.'])
     :S.bkCount?routeRank(eq):rankOf(eq);
   const best=readJSON(KEY_BEST);
   const newBest=!over&&(!best||ret>best.ret);
