@@ -1555,7 +1555,7 @@ function newGame(diff){
   });
 }
 function continueGame(sv){
-  S=sv;placePlayer(S.player||{x:4,y:5,dir:'down'});resetNPCs();updatePrices();mode='play';updateHUD();
+  S=sv;S.bkCount=S.bkCount||0;S.bk=S.bk||null;placePlayer(S.player||{x:4,y:5,dir:"down"});resetNPCs();updatePrices();mode='play';updateHUD();
   run(()=>say(`${S.day}일차 ${hhmm(S.time)}. 다시 마을로 돌아왔다.`));
 }
 
