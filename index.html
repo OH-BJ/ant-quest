@@ -1732,7 +1732,7 @@ function continueGame(sv){
 
 /* ================= 멀티플레이 (Supabase Realtime) ================= */
 const SB_URL='https://htvogtgmmcsbztdjieps.supabase.co',SB_KEY='sb_publishable_xhFjs4O3qoTAPNeyxOg3jg_EcBJeSRd';
-const MULTI_DAYS=10,SEG=[15,135,30],DAY_MS=(SEG[0]+SEG[1]+SEG[2])*1000;
+const SEG_W=[1,9,2],dayMsOf=()=>S&&S.multi&&S.multi.dayMs||180000;
 const PAL=['#3d7be0','#e0703a','#5aa84a','#b04ad0','#d4b02a','#2ab3b0','#e04870','#8a6a4a'];
 let sb=null,chan=null,OTHERS={},lastPresence=0,lastMv=null,myBubble=null,MYID=null;
 function myId(){
@@ -1745,7 +1745,7 @@ const colOf=id=>PAL[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%PAL.length];
 function sbClient(){if(!sb&&window.supabase)sb=window.supabase.createClient(SB_URL,SB_KEY,{realtime:{worker:true,heartbeatIntervalMs:15000}});return sb}
 function presenceMeta(){
   const M=S.multi,eq=equity();
-  return {id:myId(),name:M.name,host:M.host,cfg:{seed:M.seed,diff:S.diff,days:M.days,startAt:M.startAt},
+  return {id:myId(),name:M.name,host:M.host,cfg:{seed:M.seed,diff:S.diff,days:M.days,dayMs:M.dayMs,startAt:M.startAt},
     eq:Math.round(eq),ret:eq/S.start-1,day:S.day,x:P.x,y:P.y,dir:P.dir,out:!!M.out};
 }
 function pushPresence(){if(chan&&S&&S.multi){lastPresence=performance.now();chan.track(presenceMeta()).catch(()=>{})}}
@@ -1817,24 +1817,32 @@ async function askName(){
 }
 function startMulti(M){
   clearSave('multi');S=newState(M.diff,M.seed);
-  S.multi={code:M.code,seed:M.seed,days:M.days,startAt:M.startAt,host:M.host,name:M.name};
+  S.multi={code:M.code,seed:M.seed,days:M.days,dayMs:M.dayMs||180000,startAt:M.startAt,host:M.host,name:M.name};
+  // 짧은 판에서도 블랙스완이 판 안에 오도록 (모두에게 같은 날)
+  if(M.days<30)S.swanDay=3+Math.floor(mulberry(M.seed+7)()*Math.max(1,M.days-4));
   rollDay();placePlayer(S.player);resetNPCs();mode='play';updateHUD();save();
 }
 async function multiMenu(){
   mode='title';
   if(!window.supabase){await say('멀티 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.\n(claude.ai 미리보기에서는 멀티가 동작하지 않아요. GitHub 주소로 접속해 주세요.)');return showTitle()}
   const name=await askName();if(!name)return showTitle();
-  const c=await choose(`${name} 님, 어떻게 할까요?\n한 판은 ${MULTI_DAYS}일, 하루는 실제 3분이에요. 메뉴를 열어도 시간은 멈추지 않아요.`,['방 만들기','방 코드로 참가','돌아가기']);
+  const c=await choose(`${name} 님, 어떻게 할까요?\n판 길이는 방장이 정해요. 모두의 시계가 같아서 메뉴를 열어도 시간은 멈추지 않아요.`,['방 만들기','방 코드로 참가','돌아가기']);
   if(c===2)return showTitle();
   if(c===0){
     const keys=Object.keys(DIFF);
     const k=await choose('방 난이도를 골라 주세요.',keys.map(x=>DIFF[x].name).concat('돌아가기'));
     if(k>=keys.length)return multiMenu();
+    const lens=[30,20,10],speeds=[[2,'빠르게'],[3,'보통'],[4,'느긋하게']];
+    const sp=await choose('하루를 실제로 몇 분으로 할까요?\n(장이 열려 있는 시간은 그중 4분의 3이에요)',speeds.map(([m,t])=>`${t} · 하루 ${m}분`).concat('돌아가기'),null,3);
+    if(sp>=speeds.length)return multiMenu();
+    const mins=speeds[sp][0],hm=d=>{const t=d*mins;return t>=60?`약 ${Math.floor(t/60)}시간${t%60?` ${t%60}분`:''}`:`약 ${t}분`};
+    const ln=await choose('몇 일짜리 판으로 할까요?',lens.map(d=>`${d}일 (${hm(d)})`).concat('돌아가기'),null,3);
+    if(ln>=lens.length)return multiMenu();
     const code=genCode();
     try{await connectRoom(code)}catch(e){leaveRoom();await say('서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.');return showTitle()}
-    startMulti({code,seed:Math.floor(Math.random()*2147483647),diff:keys[k],days:MULTI_DAYS,startAt:null,host:true,name});
+    startMulti({code,seed:Math.floor(Math.random()*2147483647),diff:keys[k],days:lens[ln],dayMs:mins*60000,startAt:null,host:true,name});
     pushPresence();
-    await say(`방을 만들었어요! 방 코드는 [ ${code} ] 예요.\n친구에게 코드를 알려 주고, 다 모이면 M 메뉴에서 "게임 시작"을 눌러 주세요.`,'멀티');
+    await say(`방을 만들었어요! 방 코드는 [ ${code} ] 예요. (${lens[ln]}일 · 하루 ${mins}분)\n친구에게 코드를 알려 주고, 다 모이면 M 메뉴에서 "게임 시작"을 눌러 주세요.`,'멀티');
   }else{
     const code=((await ask('방 코드 4글자를 입력해 주세요.','ABCD',4))||'').toUpperCase().replace(/[^A-Z]/g,'');
     if(code.length!==4)return multiMenu();
@@ -1842,9 +1850,9 @@ async function multiMenu(){
     try{await connectRoom(code)}catch(e){leaveRoom();await say('서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.');return showTitle()}
     const cfg=await waitCfg(5000);
     if(!cfg){leaveRoom();await say(`[ ${code} ] 방을 찾지 못했어요. 코드를 다시 확인해 주세요.`);return multiMenu()}
-    startMulti({code,seed:cfg.seed,diff:cfg.diff,days:cfg.days,startAt:cfg.startAt,host:false,name});
+    startMulti({code,seed:cfg.seed,diff:cfg.diff,days:cfg.days,dayMs:cfg.dayMs,startAt:cfg.startAt,host:false,name});
     pushPresence();
-    await say(cfg.startAt?`[ ${code} ] 방에 참가했어요. 이미 게임이 진행 중이라 지금 날짜부터 함께해요!`:`[ ${code} ] 방에 참가했어요.\n방장이 시작할 때까지 마을을 둘러보세요. 시장은 아직 열리지 않아요.`,'멀티');
+    await say(cfg.startAt?`[ ${code} ] 방에 참가했어요. 이미 게임이 진행 중이라 지금 날짜부터 함께해요!`:`[ ${code} ] 방에 참가했어요. (${cfg.days}일 · 하루 ${Math.round((cfg.dayMs||180000)/60000)}분)\n방장이 시작할 때까지 마을을 둘러보세요. 시장은 아직 열리지 않아요.`,'멀티');
   }
 }
 async function continueMulti(sv){
@@ -1853,7 +1861,7 @@ async function continueMulti(sv){
   catch(e){toast('서버에 연결하지 못했어요. 혼자서 계속 진행돼요.')}
 }
 function timeForElapsed(el){
-  const r=(el%DAY_MS)/1000;
+  const ms=dayMsOf(),u=ms/12/1000,SEG=SEG_W.map(w=>w*u),r=(el%ms)/1000;
   if(r<SEG[0])return DAY_START+(OPEN-DAY_START)*r/SEG[0];
   if(r<SEG[0]+SEG[1])return OPEN+(CLOSE-OPEN)*(r-SEG[0])/SEG[1];
   return Math.min(NIGHT_END,CLOSE+(NIGHT_END-CLOSE)*(r-SEG[0]-SEG[1])/SEG[2]);
@@ -1864,7 +1872,7 @@ function multiTick(){
   if(mode!=='play'||!M.startAt)return;
   const el=Date.now()-M.startAt;
   if(el<0){const sec=Math.ceil(-el/1000);if(sec!==M.cd){M.cd=sec;if(sec<=5)toast(`시작까지 ${sec}초`)}return}
-  const day=Math.floor(el/DAY_MS)+1;
+  const day=Math.floor(el/dayMsOf())+1;
   while(S.day<day&&mode==='play')multiDayEnd();
   if(mode!=='play'||S.day>M.days)return;
   const t=timeForElapsed(el);if(t>S.time)clockTo(t);
