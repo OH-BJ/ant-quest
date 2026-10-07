@@ -164,7 +164,7 @@ body{background:var(--page);color:var(--ink);font-family:var(--f-ui)}
           </div>
         </section>
       </div>
-      <p class="foot">↑↓ 종목 · ←→ 버튼 · 확인 키로 주문 · M 차트 전환 · 보유 중이 아니면 팔기 버튼이 공매도, 공매도 중이면 사기 버튼이 갚기로 바뀝니다 · 장 시간 09:00~15:30 · 수수료 0.015% · 매도 거래세 0.18% · 가격제한폭 ±30% · 공매도 대차료 하루 0.05%</p>
+      <p class="foot" id="tFoot"></p>
     </div>
 
     <div id="status" class="win big" hidden></div>
@@ -222,15 +222,19 @@ const COL={up:css.getPropertyValue('--up').trim(),dn:css.getPropertyValue('--dn'
 const FONT='DotGothic16, Orbit, "Malgun Gothic", sans-serif';
 
 /* ================= 경제 데이터 ================= */
-const DAYS=30,FEE=0.00015,TAX=0.0018,LOAN=1000000,SHORT_FEE=0.0005,DIV_TAX=0.154;
+const DAYS=30,LOAN=1000000,SHORT_FEE=0.0005,DIV_TAX=0.154;
 const DAY_START=510,OPEN=540,CLOSE=930,NIGHT_END=1320,STEP=10,N=(CLOSE-OPEN)/STEP;
+const DF=()=>DIFF[S.diff];
 const DIFF={
   easy:{name:'쉬움',start:3000000,goal:10000000,truth:.75,rate:.01,merchant:.4,fortune:.9,bear:0,upP:.55,pick:.05,loanMul:3,loanCap:50000000,
+    fee:.00015,tax:.0018,lag:0,volMul:1,rent:0,delist:.08,fortuneCost:.01,
     desc:'시작 300만 원 · 목표 1,000만 원 · 소문이 잘 맞음'},
   normal:{name:'보통',start:1000000,goal:10000000,truth:.65,rate:.015,merchant:.2,fortune:.85,bear:0,upP:.5,pick:.08,loanMul:2,loanCap:30000000,
+    fee:.00015,tax:.0018,lag:0,volMul:1,rent:0,delist:.08,fortuneCost:.01,
     desc:'시작 100만 원 · 목표 1,000만 원'},
-  hard:{name:'어려움',start:1000000,goal:100000000,truth:.5,rate:.025,merchant:.05,fortune:.7,bear:-.004,upP:.4,pick:.15,loanMul:1,loanCap:10000000,
-    desc:'시작 100만 원 · 목표 1억 원 · 하락장 · 소문은 반반 · 점은 잘 안 맞음 · 대출 빡빡'},
+  hard:{name:'어려움',start:1000000,goal:100000000,truth:.5,rate:.025,merchant:.05,fortune:.7,bear:-.005,upP:.4,pick:.15,loanMul:1,loanCap:10000000,
+    fee:.0005,tax:.003,lag:2,volMul:1.25,rent:.02,delist:.15,fortuneCost:.03,
+    desc:'목표 1억 · 하락장 · 세력이 먼저 움직임 · 수수료↑ · 매주 집세'},
 };
 const STOCKS=[
   {id:'SLM',name:'슬라임전자',sector:'전자',desc:'말랑한 반도체 1위',p:52000,vol:.028,drift:.002,beta:1},
@@ -281,7 +285,7 @@ const ITEMS=[
   {id:'tip',name:'내부자 쪽지',price:150000,rate:.1,desc:'종목 하나의 오늘 등락 범위 (가끔 찌라시)'},
   {id:'glass',name:'진실의 돋보기',price:80000,rate:.03,desc:'오늘 소문의 진위를 가려준다'},
   {id:'sand',name:'모래시계',price:300000,rate:.05,desc:'장중 시간을 2시간 되돌린다 (미래는 다시 정해짐)'},
-  {id:'snack',name:'고급 츄르',price:5000,rate:0,desc:'고양이가 아주 기뻐한다'},
+  {id:'snack',name:'고급 츄르',price:30000,rate:0,desc:'고양이가 뭔가 해 준다 (돈? 힌트? 먹튀?)'},
 ];
 const ACH=[
   ['first','첫 매수','처음으로 주식을 샀다'],
@@ -370,7 +374,7 @@ function nextMode(st){
   for(const [m,x] of w){if((t-=x)<=0)return m}
   return 'stable';
 }
-const noiseOf=(st,mood,frac=1)=>{const I=INFO[st.id],M=MODES[st.mode||'stable'];return (I.drift+M.d+mood*I.beta)*frac+gauss()*I.vol*M.v*Math.sqrt(frac)};
+const noiseOf=(st,mood,frac=1)=>{const I=INFO[st.id],M=MODES[st.mode||'stable'];return (I.drift+M.d+mood*I.beta)*frac+gauss()*I.vol*M.v*DF().volMul*Math.sqrt(frac)};
 function rerollFuture(i0){
   const mood=gauss()*.008;
   for(const st of S.stocks){
@@ -408,7 +412,7 @@ function rollDay(){
   for(const st of S.stocks){st.prev=st.price;st.hi=floorTick(st.price*1.3);st.lo=ceilTick(st.price*.7)}
   const n=rand()<.3?3:rand()<.6?2:1;
   for(const st of shuffle([...live]).slice(0,n)){
-    const up=rand()<D.upP,mag=(.06+rand()*.14)*(st.id==='GBC'?1.7:1),step=2+Math.floor(rand()*(N-5));
+    const up=rand()<D.upP,mag=(.06+rand()*.14)*(st.id==='GBC'?1.7:1)*D.volMul,step=2+Math.floor(rand()*(N-5));
     jumps[st.id].push({step,log:Math.log(1+(up?mag:-mag))});
     S.events.push({id:st.id,up,text:pick(EV[st.id][up?'up':'down']),step,fired:false});
   }
@@ -466,7 +470,7 @@ function advanceDay(){
     rep.rows.push({id:st.id,price:st.price,chg,limit:st.limit,dead:st.dead});
   }
   for(const st of S.stocks){
-    if(!st.dead&&st.price<INFO[st.id].p*.08){
+    if(!st.dead&&st.price<INFO[st.id].p*DF().delist){
       st.dead=true;rep.dead.push(st.id);
       if(S.pos[st.id]){delete S.pos[st.id];ach('delist')}
       if(S.short[st.id]){S.stats.realized+=S.short[st.id].avg*S.short[st.id].qty;delete S.short[st.id]}
@@ -488,8 +492,8 @@ function advanceDay(){
     const si=Math.round(S.shark.amt*SHARK_RATE);S.shark.amt+=si;rep.interest+=si;
     if(S.day>=S.shark.due){
       // 기한 초과: 상어 형님이 계좌를 통째로 정리한다
-      for(const id in S.pos){const st=stockOf(id),g=S.pos[id].qty*st.price;S.cash+=g-Math.ceil(g*FEE)-Math.floor(g*TAX)}
-      for(const id in S.short){const st=stockOf(id),c=S.short[id].qty*st.price;S.cash-=c+Math.ceil(c*FEE)}
+      for(const id in S.pos){const st=stockOf(id),g=S.pos[id].qty*st.price;S.cash+=g-Math.ceil(g*DF().fee)-Math.floor(g*DF().tax)}
+      for(const id in S.short){const st=stockOf(id),c=S.short[id].qty*st.price;S.cash-=c+Math.ceil(c*DF().fee)}
       S.pos={};S.short={};
       rep.collect=S.shark.amt;S.cash-=S.shark.amt;S.shark=null;
     }
@@ -498,6 +502,7 @@ function advanceDay(){
   S.idxHist.push(indexNow());
   const eq=equity();S.eqHist.push(eq);S.stats.peak=Math.max(S.stats.peak,eq);
   S.day++;
+  if(wdOf(S.day)===0&&DF().rent){rep.rent=Math.max(50000,Math.round(Math.max(0,equity())*DF().rent/1000)*1000);S.cash-=rep.rent}
   rollDay();
   return rep;
 }
@@ -510,9 +515,9 @@ function canTrade(st){
 }
 function buy(id,q){
   const st=stockOf(id);if(!canTrade(st))return;
-  q=Math.min(q,Math.floor(S.cash/(st.price*(1+FEE))));
+  q=Math.min(q,Math.floor(S.cash/(st.price*(1+DF().fee))));
   if(q<=0){buzz();toast('현금이 부족합니다');return}
-  const cost=q*st.price,fee=Math.ceil(cost*FEE);
+  const cost=q*st.price,fee=Math.ceil(cost*DF().fee);
   const p=S.pos[id]||(S.pos[id]={qty:0,avg:0});
   p.avg=(p.avg*p.qty+cost)/(p.qty+q);p.qty+=q;
   S.cash-=cost+fee;S.stats.trades++;S.stats.fees+=fee;
@@ -523,7 +528,7 @@ function sell(id,q){
   const st=stockOf(id),p=S.pos[id];if(!canTrade(st))return;
   q=Math.min(q,p?.qty||0);
   if(q<=0){buzz();toast('팔 주식이 없습니다');return}
-  const gross=q*st.price,fee=Math.ceil(gross*FEE),tax=Math.floor(gross*TAX),r=st.price/p.avg-1;
+  const gross=q*st.price,fee=Math.ceil(gross*DF().fee),tax=Math.floor(gross*DF().tax),r=st.price/p.avg-1;
   S.cash+=gross-fee-tax;S.stats.trades++;S.stats.fees+=fee+tax;
   S.stats.realized+=(st.price-p.avg)*q-fee-tax;
   if(id==='GBC'&&r>=.5)ach('moon');
@@ -538,7 +543,7 @@ function shortSell(id,q){
   const room=Math.max(0,equity())-shortValue();
   q=Math.min(q,Math.floor(room/st.price));
   if(q<=0){buzz();toast('공매도 한도 초과 (총자산만큼만 가능)');return}
-  const gross=q*st.price,fee=Math.ceil(gross*FEE),tax=Math.floor(gross*TAX);
+  const gross=q*st.price,fee=Math.ceil(gross*DF().fee),tax=Math.floor(gross*DF().tax);
   const s=S.short[id]||(S.short[id]={qty:0,avg:0});
   s.avg=(s.avg*s.qty+gross)/(s.qty+q);s.qty+=q;
   S.cash+=gross-fee-tax;S.stats.trades++;S.stats.fees+=fee+tax;
@@ -547,9 +552,9 @@ function shortSell(id,q){
 function shortCover(id,want=Infinity){
   const st=stockOf(id),s=S.short[id];if(!canTrade(st))return;
   if(!s){buzz();toast('갚을 공매도 물량이 없습니다');return}
-  const q=Math.min(want,s.qty,Math.floor(S.cash/(st.price*(1+FEE))));
+  const q=Math.min(want,s.qty,Math.floor(S.cash/(st.price*(1+DF().fee))));
   if(q<=0){buzz();toast('갚을 현금이 부족합니다');return}
-  const cost=q*st.price,fee=Math.ceil(cost*FEE),pl=(s.avg-st.price)*q-fee;
+  const cost=q*st.price,fee=Math.ceil(cost*DF().fee),pl=(s.avg-st.price)*q-fee;
   S.cash-=cost+fee;S.stats.trades++;S.stats.fees+=fee;S.stats.realized+=pl;
   if(pl>0)ach('shortwin');
   s.qty-=q;if(!s.qty)delete S.short[id];
@@ -956,7 +961,7 @@ function refreshTrade(){
     drawChart($('#tChart'),data,{...ref,base:st.prev,slots:N+1,label:'09:00 ~ 15:30'});
   }
   const qty=p?.qty||0,val=qty*st.price,pl=p?val-p.avg*qty:0,plr=p?st.price/p.avg-1:0;
-  const mx=st.price?Math.floor(S.cash/(st.price*(1+FEE))):0;
+  const mx=st.price?Math.floor(S.cash/(st.price*(1+DF().fee))):0;
   let rows=`<div><dt>보유</dt><dd>${fmt(qty)}주</dd></div><div><dt>평균단가</dt><dd>${p?fmt(p.avg):'-'}</dd></div><div><dt>평가금액</dt><dd>${fmt(val)}</dd></div><div><dt>평가손익</dt><dd class="${cls(pl)}">${p?`${fmt(pl)} (${pct(plr)})`:'-'}</dd></div>`;
   if(sh){const spl=(sh.avg-st.price)*sh.qty;rows+=`<div><dt>공매도</dt><dd>${fmt(sh.qty)}주 @${fmt(sh.avg)}</dd></div><div><dt>공매도 손익</dt><dd class="${cls(spl)}">${fmt(spl)}</dd></div>`}
   rows+=`<div><dt>살 수 있음</dt><dd>${fmt(mx)}주</dd></div><div><dt>호가 단위</dt><dd>${st.price?fmt(tickSize(st.price)):'-'}원</dd></div>`;
@@ -981,6 +986,8 @@ function doAct(i){
 function openTrade(){
   return new Promise(res=>{
     const el=$('#trade');el.hidden=false;buildTradeList();refreshTrade();
+    const pf=x=>+(x*100).toFixed(3)+'%';
+    $('#tFoot').textContent=`↑↓ 종목 · ←→ 버튼 · 확인 키로 주문 · M 차트 전환 · 보유 중이 아니면 팔기 버튼이 공매도, 공매도 중이면 사기 버튼이 갚기로 바뀝니다 · 장 시간 09:00~15:30 · 수수료 ${pf(DF().fee)} · 매도 거래세 ${pf(DF().tax)} · 가격제한폭 ±30% · 공매도 대차료 하루 0.05%${DF().lag?' · 이 난이도에선 세력이 속보보다 20분 먼저 움직입니다':''}`;
     tradeClose=()=>{popUI();el.hidden=true;tradeClose=null;blip(700);res()};
     pushUI({type:'trade',key(k){
       const n=S.stocks.length;
@@ -1071,6 +1078,7 @@ function showReport(prevEq,rep){
       ${rep.div?`<div><dt>배당금(세후)</dt><dd class="${cls(rep.div)}">${fmt(rep.div)}원</dd></div>`:''}
       ${rep.interest?`<div><dt>대출 이자</dt><dd class="dn">-${fmt(rep.interest)}원</dd></div>`:''}
       ${rep.shortFee?`<div><dt>공매도 대차료</dt><dd class="dn">-${fmt(rep.shortFee)}원</dd></div>`:''}
+      ${rep.rent?`<div><dt>주간 집세</dt><dd class="dn">-${fmt(rep.rent)}원</dd></div>`:""}
       ${rep.collect?`<div><dt>상어 형님 강제 정리</dt><dd class="dn">-${fmt(rep.collect)}원</dd></div>`:''}</dl>
       ${rep.collect?'<p class="foot">사채 기한을 넘겨 상어 형님이 보유 주식과 공매도를 모두 정리하고 빚을 회수해 갔다.</p>':''}
       <div class="rowbtns"><button class="focus" id="repOk">${S.day>DAYS?'최종 결산 ▶':'다음 날로 ▶'}</button></div>`;
@@ -1140,7 +1148,7 @@ async function enter(b){
       }else break;
     }
   }else if(b.id==='tent'){
-    const Nm='점쟁이 할멈',cost=Math.max(30000,Math.round(equity()*.01/10000)*10000);
+    const Nm='점쟁이 할멈',cost=Math.max(30000,Math.round(equity()*DF().fortuneCost/10000)*10000);
     await say('후후후... 오늘 장의 흐름을 엿보고 싶은가?',Nm);
     if(S.flags.fortune){await say('수정구슬도 쉬어야지. 내일 다시 오거라.',Nm);return}
     if(S.time>=CLOSE){await say('장이 끝났는데 무슨 점을 보누. 내일 아침에 오거라.',Nm);return}
@@ -1234,7 +1242,7 @@ async function talk(n){
         else if(it.id==='sand'){
           const t0=S.time;S.time=Math.max(OPEN,S.time-120);
           const i0=Math.floor((S.time-OPEN)/STEP);
-          for(const e of S.events)if(OPEN+e.step*STEP>S.time)e.fired=false;
+          for(const e of S.events)if(OPEN+(e.step+DF().lag)*STEP>S.time)e.fired=false;
           rerollFuture(i0);updatePrices();ach('sand');
           await say(`모래시계를 뒤집었다... 세상이 빙글 돈다!\n시간이 ${hhmm(t0)}에서 ${hhmm(S.time)}(으)로 돌아갔다.\n하지만 미래는 다시 정해진다. 아까 본 시세가 또 온다는 보장은 없다.`);
         }else if(it.id==='snack'){S.flags.snack=true;await say('고급 츄르를 샀다. 고양이에게 가 보자.')}
@@ -1309,9 +1317,27 @@ async function talk(n){
       tone(880,.08,'triangle',.05);tone(700,.12,'triangle',.05,.08);
       if(!S.flags.cat){
         S.flags.cat=true;S.stats.cat++;if(S.stats.cat>=5)ach('cat');
-        const gain=pick([100,500,500,1000,5000])*(S.flags.snack?20:1);S.cash+=gain;updateHUD();
-        await say(S.flags.snack?'냐아아아옹!! (츄르에 신났다)':'냐아옹.',n.name);
-        await say(`고양이가 다리에 몸을 비빈다.\n발밑에서 ${fmt(gain)}원을 주웠다!`);
+        if(S.flags.snack){
+          // 츄르: 돈을 물어오거나, 종목 하나를 쳐다보거나, 먹고 도망간다
+          S.flags.snack=false;
+          await say('츄르 봉지를 뜯었다... 냐아아아옹!!',n.name);
+          const t=rand();
+          if(t<.4){
+            const gain=pick([20000,50000,50000,100000,300000]);S.cash+=gain;coin();updateHUD();
+            await say(`고양이가 어디선가 금화 주머니를 물어 왔다!\n${fmt(gain)}원을 얻었다!`);
+          }else if(t<.75){
+            const live=S.stocks.filter(s=>!s.dead),ups=live.filter(s=>S.next[s.id]>0),downs=live.filter(s=>S.next[s.id]<=0);
+            const st=(rand()<.6&&ups.length)||!downs.length?pick(ups.length?ups:live):pick(downs);
+            await say(`고양이가 거래소 전광판 앞에 앉아\n${INFO[st.id].name} 글자를 뚫어지게 쳐다본다...\n(무슨 뜻일까? 고양이는 대답이 없다)`);
+          }else{
+            NPCS=NPCS.filter(x=>x!==n);
+            await say('고양이가 츄르만 쏙 먹고 담장 너머로 사라졌다.\n...오늘은 돌아오지 않을 것 같다.');
+          }
+        }else{
+          const gain=pick([100,500,500,1000,5000]);S.cash+=gain;updateHUD();
+          await say('냐아옹.',n.name);
+          await say(`고양이가 다리에 몸을 비빈다.\n발밑에서 ${fmt(gain)}원을 주웠다!`);
+        }
       }else await say('고양이는 햇볕 아래에서 졸고 있다.\n주식에는 관심이 없어 보인다.');
     }
   }finally{n.talking=false}
@@ -1410,7 +1436,7 @@ function tickTime(dt){
   const b=S.time=Math.min(NIGHT_END,a+dt*rate);
   if(a<OPEN&&b>=OPEN){toast('딩동! 장이 열렸습니다 (09:00)','news');bell()}
   for(const e of S.events){
-    if(!e.fired&&b>=OPEN+e.step*STEP){
+    if(!e.fired&&b>=OPEN+(e.step+DF().lag)*STEP){
       e.fired=true;toast(`[속보] ${e.text}`,'news');newsBeep();
       if(e.up&&e.id&&S.pos[e.id])ach('news');
     }
