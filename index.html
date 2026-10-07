@@ -55,7 +55,8 @@ body{background:var(--page);color:var(--ink);font-family:var(--f-ui)}
 .opt.on::before{content:"▶";position:absolute;left:.4em;color:var(--gold);animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:.25}}
 
-.big{inset:3.2em .6em .6em;z-index:20;display:flex;flex-direction:column;gap:.6em;overflow:auto}
+.big{inset:3.2em .6em .6em;z-index:20;display:flex;flex-direction:column;gap:.6em;overflow:auto;overscroll-behavior:contain}
+.big > *{flex-shrink:0}
 .big h2{margin:0;font-size:1.15em;font-weight:normal;color:var(--gold)}
 .big h3{margin:0;font-size:1em;font-weight:normal;color:var(--ink-dim)}
 .th{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4em 1em}
@@ -124,11 +125,11 @@ body{background:var(--page);color:var(--ink);font-family:var(--f-ui)}
 #endWin .rank{font-size:2em;color:var(--gold);line-height:1.2}
 
 #pad{display:none;justify-content:space-between;align-items:center;gap:16px;padding-block:4px}
-.dpad{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:4px}
+.dpad{--k:min(56px,14.5vw);display:grid;grid-template-columns:repeat(3,var(--k));grid-template-rows:repeat(3,var(--k));gap:4px}
 .pbtn{font:inherit;color:var(--ink);background:linear-gradient(180deg,var(--win-a),var(--win-b));border:2px solid var(--win-edge);border-radius:8px;touch-action:none;-webkit-user-select:none;user-select:none;font-size:18px}
 .pbtn:active,.pbtn.held{background:var(--win-a);filter:brightness(1.4)}
 .dpad .u{grid-area:1/2} .dpad .l{grid-area:2/1} .dpad .r{grid-area:2/3} .dpad .d{grid-area:3/2}
-.abtns{display:grid;grid-template-columns:repeat(2,64px);grid-template-rows:64px 40px;gap:8px}
+.abtns{--k:min(64px,17vw);display:grid;grid-template-columns:repeat(2,var(--k));grid-template-rows:var(--k) 40px;gap:8px}
 .abtns .a,.abtns .b{border-radius:50%}
 .abtns .m{grid-column:1/3;font-size:14px}
 .help{margin:0;color:var(--page-ink);font-size:13px;line-height:1.7;text-align:center}
@@ -139,6 +140,7 @@ body{background:var(--page);color:var(--ink);font-family:var(--f-ui)}
   body{overflow:hidden;-webkit-touch-callout:none}
   .wrap{height:100dvh;box-sizing:border-box;padding-block:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-bottom));gap:8px;max-width:min(100%,calc((100dvh - 210px)*4/3))}
   .help{display:none}
+  .keys{display:none}
   #game{flex:1;min-height:0;aspect-ratio:auto;background:var(--page)}
   #cv{inset:auto;top:0;left:0;height:auto;aspect-ratio:4/3}
   #game > *{font-size:clamp(13px,3.4cqw,17px)}
@@ -240,7 +242,7 @@ const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(rand()*(i+1))
 const fmt=n=>Math.round(n).toLocaleString('ko-KR');
 const pct=x=>(x>0?'+':'')+(x*100).toFixed(2)+'%';
 const cls=x=>x>1e-6?'up':x<-1e-6?'dn':'flat';
-const arrow=x=>x>1e-6?'▲':x<-1e-6?'▼':'-';
+const arrow=x=>x>1e-6?'▲':x<-1e-6?'▼':'';
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const css=getComputedStyle(document.documentElement);
 const COL={up:css.getPropertyValue('--up').trim(),dn:css.getPropertyValue('--dn').trim(),gold:css.getPropertyValue('--gold').trim(),grid:css.getPropertyValue('--grid').trim(),dim:css.getPropertyValue('--ink-dim').trim()};
@@ -1061,7 +1063,7 @@ function openTrade(){
   return new Promise(res=>{
     const el=$('#trade');el.hidden=false;buildTradeList();refreshTrade();
     const pf=x=>+(x*100).toFixed(3)+'%';
-    $('#tFoot').textContent=`↑↓ 종목 · ←→ 버튼 · 확인 키로 주문 · M 차트 전환 · 보유 중이 아니면 팔기 버튼이 공매도, 공매도 중이면 사기 버튼이 갚기로 바뀝니다 · 장 시간 09:00~15:30 · 수수료 ${pf(DF().fee)} · 매도 거래세 ${pf(DF().tax)} · 가격제한폭 ±30% · 공매도 대차료 하루 0.05%${DF().lag?' · 이 난이도에선 세력이 속보보다 20분 먼저 움직입니다':''}`;
+    $('#tFoot').innerHTML=`<span class="keys">↑↓ 종목 · ←→ 버튼 · 확인 키로 주문 · M 차트 전환 · </span>보유 중이 아니면 팔기 버튼이 공매도, 공매도 중이면 사기 버튼이 갚기로 바뀝니다 · 장 시간 09:00~15:30 · 수수료 ${pf(DF().fee)} · 매도 거래세 ${pf(DF().tax)} · 가격제한폭 ±30% · 공매도 대차료 하루 0.05%${DF().lag?' · 이 난이도에선 세력이 속보보다 20분 먼저 움직입니다':''}`;
     tradeClose=()=>{popUI();el.hidden=true;tradeClose=null;blip(700);res()};
     pushUI({type:'trade',key(k){
       const n=S.stocks.length;
