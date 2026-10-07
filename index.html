@@ -225,9 +225,12 @@ const FONT='DotGothic16, Orbit, "Malgun Gothic", sans-serif';
 const DAYS=30,FEE=0.00015,TAX=0.0018,LOAN=1000000,SHORT_FEE=0.0005,DIV_TAX=0.154;
 const DAY_START=510,OPEN=540,CLOSE=930,NIGHT_END=1320,STEP=10,N=(CLOSE-OPEN)/STEP;
 const DIFF={
-  easy:{name:'쉬움',start:3000000,goal:10000000,truth:.75,rate:.01,merchant:.4,desc:'시작 300만 원 · 목표 1,000만 원 · 소문이 잘 맞음'},
-  normal:{name:'보통',start:1000000,goal:10000000,truth:.65,rate:.015,merchant:.2,desc:'시작 100만 원 · 목표 1,000만 원'},
-  hard:{name:'어려움',start:1000000,goal:100000000,truth:.5,rate:.02,merchant:.1,desc:'시작 100만 원 · 목표 1억 원 · 소문은 반반'},
+  easy:{name:'쉬움',start:3000000,goal:10000000,truth:.75,rate:.01,merchant:.4,fortune:.9,bear:0,upP:.55,pick:.05,loanMul:3,loanCap:50000000,
+    desc:'시작 300만 원 · 목표 1,000만 원 · 소문이 잘 맞음'},
+  normal:{name:'보통',start:1000000,goal:10000000,truth:.65,rate:.015,merchant:.2,fortune:.85,bear:0,upP:.5,pick:.08,loanMul:2,loanCap:30000000,
+    desc:'시작 100만 원 · 목표 1,000만 원'},
+  hard:{name:'어려움',start:1000000,goal:100000000,truth:.5,rate:.025,merchant:.05,fortune:.7,bear:-.004,upP:.4,pick:.15,loanMul:1,loanCap:10000000,
+    desc:'시작 100만 원 · 목표 1억 원 · 하락장 · 소문은 반반 · 점은 잘 안 맞음 · 대출 빡빡'},
 };
 const STOCKS=[
   {id:'SLM',name:'슬라임전자',sector:'전자',desc:'말랑한 반도체 1위',p:52000,vol:.028,drift:.002,beta:1},
@@ -398,14 +401,14 @@ function turnipPrice(){
   return S.tw.prices[(d-1)*2+(S.time>=720?1:0)];
 }
 function rollDay(){
-  const D=DIFF[S.diff],mood=gauss()*.012;
+  const D=DIFF[S.diff],mood=gauss()*.012+DIFF[S.diff].bear;
   S.events=[];S.path={};S.next={};S.rumors=[];
   const live=S.stocks.filter(s=>!s.dead);
   const jumps={};live.forEach(s=>jumps[s.id]=[]);
   for(const st of S.stocks){st.prev=st.price;st.hi=floorTick(st.price*1.3);st.lo=ceilTick(st.price*.7)}
   const n=rand()<.3?3:rand()<.6?2:1;
   for(const st of shuffle([...live]).slice(0,n)){
-    const up=rand()<.5,mag=(.06+rand()*.14)*(st.id==='GBC'?1.7:1),step=2+Math.floor(rand()*(N-5));
+    const up=rand()<D.upP,mag=(.06+rand()*.14)*(st.id==='GBC'?1.7:1),step=2+Math.floor(rand()*(N-5));
     jumps[st.id].push({step,log:Math.log(1+(up?mag:-mag))});
     S.events.push({id:st.id,up,text:pick(EV[st.id][up?'up':'down']),step,fired:false});
   }
@@ -439,7 +442,7 @@ function rollDay(){
     turnipWeek();
   }
   const sr=rand();
-  S.street=sr<.08?{type:'pick',at:1090+rand()*200,done:false}:sr<.16?{type:'wallet',at:560+rand()*360,done:false}:null;
+  S.street=sr<DIFF[S.diff].pick?{type:'pick',at:1090+rand()*200,done:false}:sr<DIFF[S.diff].pick+.08?{type:'wallet',at:560+rand()*360,done:false}:null;
   updatePrices();
 }
 function updatePrices(){
@@ -1108,20 +1111,32 @@ async function enter(b){
     await openTrade();
   }else if(b.id==='bank'){
     const rate=(DIFF[S.diff].rate*100).toFixed(1);
-    await say(`왕립 은행입니다. 대출은 100만 원 단위, 이자는 하루 ${rate}%입니다.`,'은행원');
+    const D=DIFF[S.diff],rule=`총자산의 ${D.loanMul}배, 최대 ${fmt(D.loanCap/10000)}만 원`;
+    await say(`왕립 은행입니다. 이자는 하루 ${rate}%이고,\n대출 한도는 ${rule}까지입니다.`,'은행원');
+    const UNITS=[LOAN,LOAN*5,LOAN*10];
     for(;;){
-      const limit=Math.max(0,Math.floor(equity()*2/LOAN)*LOAN);
-      const c=await choose(`현재 대출 ${fmt(S.debt)}원 · 대출 한도 ${fmt(limit)}원\n무엇을 도와드릴까요?`,['100만 원 빌리기','100만 원 갚기','전부 갚기','나가기'],'은행원');
+      const limit=Math.min(D.loanCap,Math.max(0,Math.floor(equity()*D.loanMul/LOAN)*LOAN)),room=Math.max(0,limit-S.debt);
+      const c=await choose(`현재 대출 ${fmt(S.debt)}원 · 한도 ${fmt(limit)}원 · 더 빌릴 수 있는 돈 ${fmt(room)}원\n무엇을 도와드릴까요?`,['빌리기','갚기','나가기'],'은행원');
       if(c===0){
-        if(S.debt+LOAN>limit){buzz();await say('신용이 부족합니다. 대출은 총자산의 2배까지만 가능해요.','은행원');continue}
-        S.debt+=LOAN;S.cash+=LOAN;S.stats.loans++;coin();ach('loan');updateHUD();
-        await say('100만 원을 빌려드렸습니다. 총자산이 0 아래로 떨어지면... 아시죠?','은행원');
-      }else if(c===1||c===2){
+        if(room<LOAN){buzz();await say(`더 빌려드릴 수 없습니다. 대출 한도는 ${rule}까지예요.`,'은행원');continue}
+        const ok=UNITS.filter(u=>u<=room);
+        const opts=ok.map(u=>fmt(u/10000)+'만 원');
+        if(room>ok[ok.length-1])opts.push(`한도까지 ${fmt(Math.floor(room/LOAN)*100)}만 원`);
+        const k=await choose('얼마나 빌리시겠어요?',[...opts,'취소'],'은행원');
+        if(k>=opts.length)continue;
+        const amt=k<ok.length?ok[k]:Math.floor(room/LOAN)*LOAN;
+        S.debt+=amt;S.cash+=amt;S.stats.loans++;coin();ach('loan');updateHUD();
+        await say(`${fmt(amt)}원을 빌려드렸습니다. 총자산이 0 아래로 떨어지면... 아시죠?`,'은행원');
+      }else if(c===1){
         if(!S.debt){await say('갚으실 대출이 없습니다.','은행원');continue}
-        const amt=Math.min(S.cash,c===1?Math.min(LOAN,S.debt):S.debt);
+        const opts=UNITS.filter(u=>u<S.debt).map(u=>fmt(u/10000)+'만 원').concat(`전부 (${fmt(S.debt)}원)`);
+        const k=await choose('얼마나 갚으시겠어요?',[...opts,'취소'],'은행원');
+        if(k>=opts.length)continue;
+        const want=k===opts.length-1?S.debt:UNITS[k];
+        const amt=Math.min(S.cash,want);
         if(amt<=0){buzz();await say('현금이 없으시네요. 주식을 먼저 파셔야 합니다.','은행원');continue}
         S.cash-=amt;S.debt-=amt;coin(true);updateHUD();
-        await say(`${fmt(amt)}원을 갚으셨습니다.${S.debt?` 남은 대출은 ${fmt(S.debt)}원입니다.`:' 대출을 모두 갚으셨어요!'}`,'은행원');
+        await say(`${fmt(amt)}원을 갚으셨습니다.${amt<want?' (현금이 모자라 있는 만큼만 갚았어요)':''}${S.debt?` 남은 대출은 ${fmt(S.debt)}원입니다.`:' 대출을 모두 갚으셨어요!'}`,'은행원');
       }else break;
     }
   }else if(b.id==='tent'){
@@ -1137,12 +1152,12 @@ async function enter(b){
     const st=S.stocks[k];
     if(st.dead){await say('죽은 종목의 미래는 볼 게 없다네...',Nm);return}
     S.cash-=cost;S.flags.fortune=true;S.stats.fortunes++;if(S.stats.fortunes>=5)ach('fortune');updateHUD();
-    let up=S.next[st.id]>0;if(rand()<.15)up=!up;
+    let up=S.next[st.id]>0;if(rand()>DIFF[S.diff].fortune)up=!up;
     tone(330,.4,'triangle',.05);tone(494,.4,'triangle',.05,.2);tone(740,.6,'triangle',.05,.4);
     await say('(수정구슬이 희미하게 빛난다...)');
     await say(up?`보인다... 오늘 ${INFO[st.id].name}에서 붉은 기운이 솟구치는구나!`:`보인다... 오늘 ${INFO[st.id].name} 위로 푸른 안개가 내려앉는구나...`,Nm);
     await say(`그리고... 요즘 이 종목엔 ${MODES[st.mode||'stable'].f} 기운이 며칠째 감돌고 있구나.`,Nm);
-    await say('내 점은 열에 여덟아홉은 맞지. 믿고 말고는 자네 몫이야. 히히히.',Nm);
+    await say('내 점은 꽤 잘 맞는 편이지. 가끔 틀릴 뿐. 믿고 말고는 자네 몫이야. 히히히.',Nm);
   }else if(b.id==='board'){
     const Nm='마을 게시판';
     if(S.day===1&&S.time<OPEN)await say('[공지] 모험가 마을 증권거래소 개장!\n장은 09:00~15:30, 하루 가격제한폭은 ±30%입니다.',Nm);
