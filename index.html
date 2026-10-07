@@ -651,17 +651,48 @@ function shortCover(id,want=Infinity){
 }
 
 /* ================= 저장 ================= */
-const KEY='ant-quest-save-v3',KEY_MULTI='ant-quest-multi-v1',KEY_ACH='ant-quest-ach',KEY_BEST='ant-quest-best';
+const KEY='ant-quest-save-v3',KEY_DAILY='ant-quest-daily-v1',KEY_ROOMS='ant-quest-rooms-v1',KEY_MULTI='ant-quest-multi-v1',KEY_ACH='ant-quest-ach',KEY_BEST='ant-quest-best';
 function save(){
   if(!S||mode!=='play')return;
   S.player={x:P.x,y:P.y,dir:P.dir};
-  try{localStorage.setItem(S.multi?KEY_MULTI:KEY,JSON.stringify(S))}catch(e){}
+  try{
+    if(S.multi){const rooms=readJSON(KEY_ROOMS)||{};rooms[S.multi.code]=S;localStorage.setItem(KEY_ROOMS,JSON.stringify(rooms))}
+    else localStorage.setItem(S.challenge?KEY_DAILY:KEY,JSON.stringify(S));
+  }catch(e){}
 }
 const readJSON=k=>{try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}};
 const writeJSON=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
-function loadSave(){const d=readJSON(KEY);return d&&d.v===3?d:null}
-function clearSave(kind){try{localStorage.removeItem(kind==='multi'?KEY_MULTI:KEY)}catch(e){}}
-function loadMulti(){const d=readJSON(KEY_MULTI);return d&&d.v===3&&d.multi&&d.day<=d.multi.days?d:null}
+// 예전 저장 형식 옮기기: 혼자 하기 칸에 들어 있던 오늘의 시장, 칸이 하나뿐이던 멀티
+(function migrateSaves(){
+  const old=readJSON(KEY);
+  if(old&&old.challenge&&!readJSON(KEY_DAILY)){writeJSON(KEY_DAILY,old);try{localStorage.removeItem(KEY)}catch(e){}}
+  const m=readJSON(KEY_MULTI);
+  if(m&&m.multi){const rooms=readJSON(KEY_ROOMS)||{};if(!rooms[m.multi.code])rooms[m.multi.code]=m;writeJSON(KEY_ROOMS,rooms)}
+  try{localStorage.removeItem(KEY_MULTI)}catch(e){}
+})();
+function loadSave(){const d=readJSON(KEY);return d&&d.v===3&&!d.challenge?d:null}
+function loadDaily(){const d=readJSON(KEY_DAILY);return d&&d.v===3&&d.challenge?d:null}
+// 끝나지 않은 멀티 방들 (최근 것 먼저). 실제 시간으로 판이 이미 끝났어도, 들어가면 결산을 볼 수 있게 하루 여유를 둔다
+function loadRooms(){
+  const rooms=readJSON(KEY_ROOMS)||{},now=Date.now(),list=[];
+  for(const code in rooms){
+    const d=rooms[code],M=d&&d.multi;
+    if(!M||d.v!==3)continue;
+    const over=M.startAt&&now>M.startAt+M.days*(M.dayMs||180000)+864e5;
+    if(over||d.day>M.days){delete rooms[code];continue}
+    list.push(d);
+  }
+  writeJSON(KEY_ROOMS,rooms);
+  return list.sort((a,b)=>(b.multi.startAt||9e15)-(a.multi.startAt||9e15)).slice(0,3);
+}
+function clearSave(kind,code){
+  try{
+    if(kind==='multi'){const rooms=readJSON(KEY_ROOMS)||{};delete rooms[code];localStorage.setItem(KEY_ROOMS,JSON.stringify(rooms))}
+    else localStorage.removeItem(kind==='daily'?KEY_DAILY:KEY);
+  }catch(e){}
+}
+const slotOf=st=>st.multi?'multi':st.challenge?'daily':'solo';
+function clearCurrent(){clearSave(slotOf(S),S.multi&&S.multi.code)}
 function ach(id){
   if(!S||S.ach[id])return;
   S.ach[id]=true;
@@ -1145,7 +1176,7 @@ let stBtn=0,statusClose=null;
 const ST_BTNS=()=>{
   const b=[['닫기','close'],[`효과음 ${sfxOn?'켜짐':'꺼짐'}`,'sfx'],[`음악 ${musicOn?'켜짐':'꺼짐'}`,'music']];
   if(S.multi){b.push(['채팅','chat']);if(S.multi.host&&!S.multi.startAt)b.push(['게임 시작','start']);b.push(['방 나가기','leave'])}
-  else b.push(['처음부터','restart']);
+  else b.push(['저장하고 타이틀로','title'],['처음부터','restart']);
   return b;
 };
 function rankTable(){
@@ -1194,13 +1225,14 @@ async function statusAct(i){
   if(act==='music'){musicOn=!musicOn;renderStatus();blip();return}
   if(act==='chat'){statusClose();setTimeout(()=>run(sendChat),0);return}
   if(act==='start'){hostStart();stBtn=0;renderStatus();return}
+  if(act==='title'){statusClose();save();mode='title';updateHUD();setTimeout(()=>{busy=false;showTitle()},0);return}
   if(act==='leave'){
     const c=await choose('방에서 나갈까요?\n다시 들어오면 이어서 할 수 있어요.',['나간다','취소']);
     if(c===0){statusClose();save();leaveRoom();mode='title';updateHUD();setTimeout(()=>{busy=false;showTitle()},0)}
     return;
   }
   const c=await choose('정말 처음부터 다시 할까요?\n저장된 기록이 지워집니다.',['다시 시작','취소']);
-  if(c===0){statusClose();clearSave(S.multi?'multi':null);mode='title';updateHUD();setTimeout(()=>{busy=false;showTitle()},0)}
+  if(c===0){statusClose();clearCurrent();mode='title';updateHUD();setTimeout(()=>{busy=false;showTitle()},0)}
 }
 function openStatus(){
   return new Promise(res=>{
@@ -1630,7 +1662,7 @@ function routeRank(eq){
 }
 function ending(kind){
   if(S.multi){S.multi.out=kind==='bankrupt'||kind==='fail';pushPresence()}
-  mode='end';clearSave(S.multi?'multi':null);updateHUD();
+  mode='end';clearCurrent();updateHUD();
   const eq=equity(),ret=eq/S.start-1,over=kind==='bankrupt'||kind==='fail';
   const [rank,line]=kind==='bankrupt'?(S.bkCount?['두 번째 파산','한 번은 일어섰지만, 두 번째는 없었다. 은행원이 조용히 벤치 자리를 가리킨다...']:['파산','총자산이 0 아래로 떨어진 채 마지막 날을 맞았다. 은행원이 집 문을 두드린다...'])
     :kind==='fail'?['박씨의 옆자리','변제금을 세 번 내지 못해 회생이 폐지되었다. 오늘부터 박씨와 나란히 낚싯대를 드리운다.']
@@ -1681,11 +1713,12 @@ function ending(kind){
 /* ================= 타이틀 ================= */
 function showTitle(){
   mode='title';updateHUD();
-  const sv=loadSave(),mv=loadMulti();
+  const sv=loadSave(),dv=loadDaily(),rooms=loadRooms();
   const items=[];
-  if(sv)items.push([`이어하기 (${sv.challenge?'오늘의 시장 · ':''}${DIFF[sv.diff].name} · ${sv.day}일차)`,()=>continueGame(sv)]);
-  if(mv)items.push([`멀티 이어하기 (방 ${mv.multi.code} · ${mv.day}일차)`,()=>continueMulti(mv)]);
-  items.push(['새로 시작',()=>pickDifficulty()],[`오늘의 시장 도전 (${todayKey()})`,()=>startDaily()],['같이 하기 (멀티)',()=>multiMenu()]);
+  if(sv)items.push([`이어하기 · 혼자 하기 (${DIFF[sv.diff].name} · ${sv.day}일차)`,()=>continueGame(sv)]);
+  if(dv)items.push([`이어하기 · 오늘의 시장 ${dv.challenge===todayKey()?'':`(지난 ${dv.challenge}) `}(${dv.day}일차)`,()=>continueGame(dv)]);
+  for(const r of rooms)items.push([`이어하기 · 멀티 방 ${r.multi.code} (${r.multi.startAt?`${r.day}일차`:'시작 전'})`,()=>continueMulti(r)]);
+  items.push(['혼자 하기 · 새로 시작',()=>pickDifficulty()],[`오늘의 시장 도전 (${todayKey()})`,()=>startDaily()],['같이 하기 (멀티)',()=>multiMenu()]);
   const opts=items.map(x=>x[0]);
   let sel=0;
   const m=$('#titleMenu');
@@ -1703,18 +1736,28 @@ function showTitle(){
 }
 async function pickDifficulty(){
   mode='title';
+  const old=loadSave();
+  if(old){
+    const c=await choose(`진행 중인 혼자 하기(${DIFF[old.diff].name} · ${old.day}일차)가 있어요.\n새로 시작하면 그 기록은 지워져요. (오늘의 시장 · 멀티 기록은 그대로예요)`,['새로 시작','돌아가기']);
+    if(c!==0)return showTitle();
+  }
   const keys=Object.keys(DIFF);
   const c=await choose('난이도를 골라 주세요.\n'+keys.map(k=>`· ${DIFF[k].name}: ${DIFF[k].desc}`).join('\n'),keys.map(k=>DIFF[k].name).concat('돌아가기'));
   if(c>=keys.length)return showTitle();
   newGame(keys[c]);
 }
 const todayKey=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
-function startDaily(){
+async function startDaily(){
   const key=todayKey(),seed=[...key].reduce((a,c)=>Math.imul(a^c.charCodeAt(0),16777619)>>>0,2166136261);
+  const old=loadDaily();
+  if(old){
+    const c=await choose(`진행 중인 오늘의 시장 도전(${old.challenge} · ${old.day}일차)이 있어요.\n새로 시작하면 그 기록은 지워져요.`,['새로 시작','돌아가기']);
+    if(c!==0)return showTitle();
+  }
   newGame('normal',seed,key);
 }
 function newGame(diff,seed=null,challenge=null){
-  clearSave();S=newState(diff,seed);S.challenge=challenge;rollDay();placePlayer(S.player);resetNPCs();mode='play';updateHUD();
+  clearSave(challenge?'daily':'solo');S=newState(diff,seed);S.challenge=challenge;rollDay();placePlayer(S.player);resetNPCs();mode='play';updateHUD();
   run(async()=>{
     if(S.challenge)await say(`오늘의 시장 도전 (${S.challenge})\n오늘 이 모드를 하는 사람은 모두 똑같은 시장을 만나요.\n끝나면 결과를 복사해서 친구와 비교해 보세요!`,'도움말');
     await say('(책상 위에 편지가 놓여 있다.)');
@@ -1816,7 +1859,7 @@ async function askName(){
   return v;
 }
 function startMulti(M){
-  clearSave('multi');S=newState(M.diff,M.seed);
+  S=newState(M.diff,M.seed);
   S.multi={code:M.code,seed:M.seed,days:M.days,dayMs:M.dayMs||180000,startAt:M.startAt,host:M.host,name:M.name};
   // 짧은 판에서도 블랙스완이 판 안에 오도록 (모두에게 같은 날)
   if(M.days<30)S.swanDay=3+Math.floor(mulberry(M.seed+7)()*Math.max(1,M.days-4));
